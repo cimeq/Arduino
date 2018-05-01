@@ -10,7 +10,7 @@
         {
           "category": "ESP8266", 
           "name": "esp8266", 
-          "url": "https://github.com/cimeq/Arduino/releases/download/2.4.1/esp8266-2.4.1.zip", 
+          "url": "https://github.com/cimeq/Arduino/archive/2.4.1.zip", 
           "checksum": "SHA-256:794f5e82fbc0490b68d45b2c63e8ece8f1fe3fe8ff51c78637823ca89a5a553c", 
           "version": "2.4.1", 
           "architecture": "esp8266", 
