@@ -1564,7 +1564,6 @@
             }
           ]
         },
-	      , 
         {
           "category": "ESP8266", 
           "name": "esp8266", 
@@ -1686,7 +1685,7 @@
               "name": "ESPectro Core"
             }
           ]
-        }
+        },
         {
           "category": "ESP8266", 
           "help": {
