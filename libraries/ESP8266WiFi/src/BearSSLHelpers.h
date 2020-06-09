@@ -24,8 +24,8 @@
 #define _BEARSSLHELPERS_H
 
 #include <bearssl/bearssl.h>
+#include <StackThunk.h>
 #include <Updater.h>
-
 
 // Internal opaque structures, not needed by user applications
 namespace brssl {
@@ -146,6 +146,7 @@ class HashSHA256 : public UpdaterHashClass {
     virtual void end() override;
     virtual int len() override;
     virtual const void *hash() override;
+    virtual const unsigned char *oid() override;
   private:
     br_sha256_context _cc;
     unsigned char _sha256[32];
@@ -157,7 +158,8 @@ class SigningVerifier : public UpdaterVerifyClass {
     virtual bool verify(UpdaterHashClass *hash, const void *signature, uint32_t signatureLen) override;
 
   public:
-    SigningVerifier(PublicKey *pubKey) { _pubKey = pubKey; }
+    SigningVerifier(PublicKey *pubKey) { _pubKey = pubKey; stack_thunk_add_ref(); }
+    ~SigningVerifier() { stack_thunk_del_ref(); }
 
   private:
     PublicKey *_pubKey;

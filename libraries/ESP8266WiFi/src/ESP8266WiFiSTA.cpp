@@ -25,6 +25,7 @@
 #include "ESP8266WiFi.h"
 #include "ESP8266WiFiGeneric.h"
 #include "ESP8266WiFiSTA.h"
+#include "PolledTimeout.h"
 
 #include "c_types.h"
 #include "ets_sys.h"
@@ -63,6 +64,13 @@ static bool sta_config_equal(const station_config& lhs, const station_config& rh
  * @return equal
  */
 static bool sta_config_equal(const station_config& lhs, const station_config& rhs) {
+
+#ifdef NONOSDK3V0
+    static_assert(sizeof(station_config) == 116, "struct station_config has changed, please update comparison function");
+#else
+    static_assert(sizeof(station_config) == 112, "struct station_config has changed, please update comparison function");
+#endif
+
     if(strncmp(reinterpret_cast<const char*>(lhs.ssid), reinterpret_cast<const char*>(rhs.ssid), sizeof(lhs.ssid)) != 0) {
         return false;
     }
@@ -81,6 +89,20 @@ static bool sta_config_equal(const station_config& lhs, const station_config& rh
             return false;
         }
     }
+
+    if(lhs.threshold.rssi != rhs.threshold.rssi) {
+        return false;
+    }
+
+    if(lhs.threshold.authmode != rhs.threshold.authmode) {
+        return false;
+    }
+
+#ifdef NONOSDK3V0
+    if (lhs.open_and_wep_mode_disable != rhs.open_and_wep_mode_disable) {
+        return false;
+    }
+#endif
 
     return true;
 }
@@ -226,6 +248,27 @@ wl_status_t ESP8266WiFiSTAClass::begin() {
  * @param dns1       Static DNS server 1
  * @param dns2       Static DNS server 2
  */
+
+#if LWIP_VERSION_MAJOR != 1
+/*
+  About the following call in the end of ESP8266WiFiSTAClass::config():
+      netif_set_addr(eagle_lwip_getif(STATION_IF), &info.ip, &info.netmask, &info.gw);
+
+  With lwip2, it is needed to trigger IP address change.
+      Recall: when lwip2 is enabled, lwip1 api is still used by espressif firmware
+          https://github.com/d-a-v/esp82xx-nonos-linklayer/tree/25d5e8186f710a230221021cba97727dbfdfd953#how-it-works
+
+  We need first to disable the lwIP API redirection for netif_set_addr() so lwip1's call will be linked:
+      https://github.com/d-a-v/esp82xx-nonos-linklayer/blob/25d5e8186f710a230221021cba97727dbfdfd953/glue-lwip/arch/cc.h#L122
+
+  We also need to declare its prototype using ip4_addr_t instead of ip_addr_t because lwIP-1.x never has IPv6.
+  No need to worry about this #undef, this call is only needed in lwip2, and never used in arduino core code.
+ */
+#undef netif_set_addr // need to call lwIP-v1.4 netif_set_addr()
+extern "C" struct netif* eagle_lwip_getif (int netif_index);
+extern "C" void netif_set_addr (struct netif* netif, ip4_addr_t* ip, ip4_addr_t* netmask, ip4_addr_t* gw);
+#endif
+
 bool ESP8266WiFiSTAClass::config(IPAddress local_ip, IPAddress arg1, IPAddress arg2, IPAddress arg3, IPAddress dns2) {
 
   if(!WiFi.enableSTA(true)) {
@@ -267,6 +310,13 @@ bool ESP8266WiFiSTAClass::config(IPAddress local_ip, IPAddress arg1, IPAddress a
     return false;
   }
 
+#if LWIP_VERSION_MAJOR != 1 && !CORE_MOCK
+  // get current->previous IP address
+  // (check below)
+  struct ip_info previp;
+  wifi_get_ip_info(STATION_IF, &previp);
+#endif
+
   struct ip_info info;
   info.ip.addr = local_ip.v4();
   info.gw.addr = gateway.v4();
@@ -288,6 +338,14 @@ bool ESP8266WiFiSTAClass::config(IPAddress local_ip, IPAddress arg1, IPAddress a
       // Set DNS2-Server
       dns_setserver(1, dns2);
   }
+
+#if LWIP_VERSION_MAJOR != 1 && !CORE_MOCK
+  // trigger address change by calling lwIP-v1.4 api
+  // (see explanation above)
+  // only when ip is already set by other mean (generally dhcp)
+  if (previp.ip.addr != 0 && previp.ip.addr != info.ip.addr)
+      netif_set_addr(eagle_lwip_getif(STATION_IF), &info.ip, &info.netmask, &info.gw);
+#endif
 
   return true;
 }
@@ -311,10 +369,16 @@ bool ESP8266WiFiSTAClass::reconnect() {
  * @return  one value of wl_status_t enum
  */
 bool ESP8266WiFiSTAClass::disconnect(bool wifioff) {
-    bool ret;
+    bool ret = false;
     struct station_config conf;
     *conf.ssid = 0;
     *conf.password = 0;
+
+    // API Reference: wifi_station_disconnect() need to be called after system initializes and the ESP8266 Station mode is enabled.
+    if (WiFi.getMode() & WIFI_STA)
+        ret = wifi_station_disconnect();
+    else
+        ret = true;
 
     ETS_UART_INTR_DISABLE();
     if(WiFi._persistent) {
@@ -322,7 +386,7 @@ bool ESP8266WiFiSTAClass::disconnect(bool wifioff) {
     } else {
         wifi_station_set_config_current(&conf);
     }
-    ret = wifi_station_disconnect();
+
     ETS_UART_INTR_ENABLE();
 
     if(wifioff) {
@@ -384,17 +448,22 @@ bool ESP8266WiFiSTAClass::getAutoReconnect() {
 /**
  * Wait for WiFi connection to reach a result
  * returns the status reached or disconnect if STA is off
- * @return wl_status_t
+ * @return wl_status_t or -1 on timeout
  */
-uint8_t ESP8266WiFiSTAClass::waitForConnectResult() {
+int8_t ESP8266WiFiSTAClass::waitForConnectResult(unsigned long timeoutLength) {
     //1 and 3 have STA enabled
     if((wifi_get_opmode() & 1) == 0) {
         return WL_DISCONNECTED;
     }
-    while(status() == WL_DISCONNECTED) {
-        delay(100);
+    using esp8266::polledTimeout::oneShot;
+    oneShot timeout(timeoutLength); // number of milliseconds to wait before returning timeout error
+    while(!timeout) {
+        yield();
+        if(status() != WL_DISCONNECTED) {
+            return status();
+        }
     }
-    return status();
+    return -1; // -1 indicates timeout
 }
 
 /**

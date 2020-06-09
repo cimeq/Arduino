@@ -95,7 +95,7 @@ WiFiClientSecure::WiFiClientSecure(ClientContext* client, bool usePMEM,
     _ssl->connectServer(client, _timeout);
 }
 
-int WiFiClientSecure::connect(CONST IPAddress& ip, uint16_t port)
+int WiFiClientSecure::connect(IPAddress ip, uint16_t port)
 {
     if (!WiFiClient::connect(ip, port)) {
         return 0;
@@ -125,6 +125,9 @@ int WiFiClientSecure::_connectSSL(const char* hostName)
 {
     if (!_ssl) {
         _ssl = std::make_shared<SSLContext>();
+	if (!_ssl) {
+          return 0;
+        }
     }
     _ssl->connect(_client, hostName, _timeout);
 
@@ -170,8 +173,7 @@ size_t WiFiClientSecure::write(Stream& stream)
     size_t totalSent = 0;
     size_t countRead;
     size_t countSent;
-    if (!_ssl)
-    {
+    if (!_ssl) {
         return 0;
     }
     do {
@@ -399,61 +401,63 @@ void WiFiClientSecure::_initSSLContext()
 bool WiFiClientSecure::setCACert(const uint8_t* pk, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject(SSL_OBJ_X509_CACERT, pk, size);
+    return _ssl ? _ssl->loadObject(SSL_OBJ_X509_CACERT, pk, size) : false;
 }
 
 bool WiFiClientSecure::setCertificate(const uint8_t* pk, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject(SSL_OBJ_X509_CERT, pk, size);
+    return _ssl ? _ssl->loadObject(SSL_OBJ_X509_CERT, pk, size) : false;
 }
 
 bool WiFiClientSecure::setPrivateKey(const uint8_t* pk, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject(SSL_OBJ_RSA_KEY, pk, size);
+    return _ssl ? _ssl->loadObject(SSL_OBJ_RSA_KEY, pk, size) : false;
 }
 
 bool WiFiClientSecure::setCACert_P(PGM_VOID_P pk, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject_P(SSL_OBJ_X509_CACERT, pk, size);
+    return _ssl ? _ssl->loadObject_P(SSL_OBJ_X509_CACERT, pk, size) : false;
 }
 
 bool WiFiClientSecure::setCertificate_P(PGM_VOID_P pk, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject_P(SSL_OBJ_X509_CERT, pk, size);
+    return _ssl ? _ssl->loadObject_P(SSL_OBJ_X509_CERT, pk, size) : false;
 }
 
 bool WiFiClientSecure::setPrivateKey_P(PGM_VOID_P pk, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject_P(SSL_OBJ_RSA_KEY, pk, size);
+    return _ssl ? _ssl->loadObject_P(SSL_OBJ_RSA_KEY, pk, size) : false;
 }
 
 bool WiFiClientSecure::loadCACert(Stream& stream, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject(SSL_OBJ_X509_CACERT, stream, size);
+    return _ssl ? _ssl->loadObject(SSL_OBJ_X509_CACERT, stream, size) : false;
 }
 
 bool WiFiClientSecure::loadCertificate(Stream& stream, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject(SSL_OBJ_X509_CERT, stream, size);
+    return _ssl ? _ssl->loadObject(SSL_OBJ_X509_CERT, stream, size) : false;
 }
 
 bool WiFiClientSecure::loadPrivateKey(Stream& stream, size_t size)
 {
     _initSSLContext();
-    return _ssl->loadObject(SSL_OBJ_RSA_KEY, stream, size);
+    return _ssl ? _ssl->loadObject(SSL_OBJ_RSA_KEY, stream, size) : false;
 }
 
 void WiFiClientSecure::allowSelfSignedCerts()
 {
     _initSSLContext();
-    _ssl->allowSelfSignedCerts();
+    if (_ssl) {
+        _ssl->allowSelfSignedCerts();
+    }
 }
 
 extern "C" int __ax_port_read(int fd, uint8_t* buffer, size_t count)
@@ -473,7 +477,7 @@ extern "C" int __ax_port_read(int fd, uint8_t* buffer, size_t count)
     }
     return cb;
 }
-extern "C" void ax_port_read() __attribute__ ((weak, alias("__ax_port_read")));
+extern "C" int ax_port_read(int fd, uint8_t* buffer, size_t count) __attribute__ ((weak, alias("__ax_port_read")));
 
 extern "C" int __ax_port_write(int fd, uint8_t* buffer, size_t count)
 {
@@ -489,7 +493,7 @@ extern "C" int __ax_port_write(int fd, uint8_t* buffer, size_t count)
     }
     return cb;
 }
-extern "C" void ax_port_write() __attribute__ ((weak, alias("__ax_port_write")));
+extern "C" int ax_port_write(int fd, uint8_t* buffer, size_t count) __attribute__ ((weak, alias("__ax_port_write")));
 
 extern "C" int __ax_get_file(const char *filename, uint8_t **buf)
 {
@@ -497,7 +501,7 @@ extern "C" int __ax_get_file(const char *filename, uint8_t **buf)
     *buf = 0;
     return 0;
 }
-extern "C" void ax_get_file() __attribute__ ((weak, alias("__ax_get_file")));
+extern "C" int ax_get_file(const char *filename, uint8_t **buf) __attribute__ ((weak, alias("__ax_get_file")));
 
 extern "C" void __ax_wdt_feed()
 {

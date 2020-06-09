@@ -21,7 +21,7 @@
 #define UPDATE_ERROR_SIGN               (12)
 
 #define U_FLASH   0
-#define U_SPIFFS  100
+#define U_FS      100
 #define U_AUTH    200
 
 #ifdef DEBUG_ESP_UPDATER
@@ -38,6 +38,7 @@ class UpdaterHashClass {
     virtual void end() = 0;
     virtual int len() = 0;
     virtual const void *hash() = 0;
+    virtual const unsigned char *oid() = 0;
 };
 
 // Abstract class to implement a signature verifier
@@ -52,6 +53,7 @@ class UpdaterClass {
     typedef std::function<void(size_t, size_t)> THandlerFunction_Progress;
   
     UpdaterClass();
+    ~UpdaterClass();
 
     /* Optionally add a cryptographic signature verification hash and method */
     void installSignature(UpdaterHashClass *hash, UpdaterVerifyClass *verify) {  _hash = hash;  _verify = verify; }

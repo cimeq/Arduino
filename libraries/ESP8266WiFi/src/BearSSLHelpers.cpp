@@ -20,6 +20,7 @@
   Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
+#include "BearSSLHelpers.h"
 #include <memory>
 #include <vector>
 #include <bearssl/bearssl.h>
@@ -28,7 +29,10 @@
 #include <string.h>
 #include <Arduino.h>
 #include <StackThunk.h>
-#include "BearSSLHelpers.h"
+#include <Updater_Signing.h>
+#ifndef ARDUINO_SIGNING
+  #define ARDUINO_SIGNING 0
+#endif
 
 namespace brssl {
   // Code here is pulled from brssl sources, with the copyright and license
@@ -230,6 +234,8 @@ namespace brssl {
     if (po) {
       free(po->name);
       free(po->data);
+      po->name = nullptr;
+      po->data = nullptr;
     }
   }
 
@@ -848,6 +854,10 @@ const void *HashSHA256::hash() {
   return (const void*) _sha256;
 }
 
+const unsigned char *HashSHA256::oid() {
+    return BR_HASH_OID_SHA256;
+}
+
 // SHA256 verifier
 uint32_t SigningVerifier::length()
 {
@@ -862,14 +872,14 @@ uint32_t SigningVerifier::length()
   }
 }
 
-bool SigningVerifier::verify(UpdaterHashClass *hash, const void *signature, uint32_t signatureLen) {
-  if (!_pubKey || !hash || !signature || signatureLen != length()) return false;
-
+// We need to use the 2nd stack to do a verification, so do the thunk
+// directly inside the class function for ease of use.
+extern "C" bool SigningVerifier_verify(PublicKey *_pubKey, UpdaterHashClass *hash, const void *signature, uint32_t signatureLen) {
   if (_pubKey->isRSA()) {
     bool ret;
     unsigned char vrf[hash->len()];
     br_rsa_pkcs1_vrfy vrfy = br_rsa_pkcs1_vrfy_get_default();
-    ret = vrfy((const unsigned char *)signature, signatureLen, NULL, sizeof(vrf), _pubKey->getRSA(), vrf);
+    ret = vrfy((const unsigned char *)signature, signatureLen, hash->oid(), sizeof(vrf), _pubKey->getRSA(), vrf);
     if (!ret || memcmp(vrf, hash->hash(), sizeof(vrf)) ) {
       return false;
     } else {
@@ -881,6 +891,20 @@ bool SigningVerifier::verify(UpdaterHashClass *hash, const void *signature, uint
     return vrfy(br_ec_get_default(), hash->hash(), hash->len(), _pubKey->getEC(), (const unsigned char *)signature, signatureLen);
   }
 };
+
+#if !CORE_MOCK
+make_stack_thunk(SigningVerifier_verify);
+extern "C" bool thunk_SigningVerifier_verify(PublicKey *_pubKey, UpdaterHashClass *hash, const void *signature, uint32_t signatureLen);
+#endif
+
+bool SigningVerifier::verify(UpdaterHashClass *hash, const void *signature, uint32_t signatureLen) {
+  if (!_pubKey || !hash || !signature || signatureLen != length()) return false;
+#if !CORE_MOCK
+    return thunk_SigningVerifier_verify(_pubKey, hash, signature, signatureLen);
+#else
+    return SigningVerifier_verify(_pubKey, hash, signature, signatureLen);
+#endif
+}
 
 #if !CORE_MOCK
 
@@ -897,3 +921,17 @@ make_stack_thunk(br_ssl_engine_sendrec_buf);
 #endif
 
 };
+
+#if ARDUINO_SIGNING
+namespace {
+  static BearSSL::PublicKey signingPubKey(signing_pubkey);
+  static BearSSL::HashSHA256 __signingHash;
+  static BearSSL::SigningVerifier __signingVerifier(&signingPubKey);
+};
+
+namespace esp8266 {
+  UpdaterHashClass& updaterSigningHash = __signingHash;
+  UpdaterVerifyClass& updaterSigningVerifier = __signingVerifier;
+};
+#endif
+
